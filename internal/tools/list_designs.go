@@ -70,6 +70,11 @@ func listDesignsHandler(mc *meshery.Client) func(context.Context, mcp.CallToolRe
 		}
 
 		fallback := fmt.Sprintf("%d designs found (page %d, page size %d)", len(designs), page, pageSize)
-		return mcp.NewToolResultStructured(designs, fallback), nil
+		return mcp.NewToolResultStructured(map[string]any{
+			"designs":   designs,
+			"count":     len(designs),
+			"page":      page,
+			"page_size": pageSize,
+		}, fallback), nil
 	}
 }

@@ -62,7 +62,10 @@ func listKubernetesContextsHandler(mc *meshery.Client) func(context.Context, mcp
 			})
 		}
 
-		fallback := fmt.Sprintf("%d Kubernetes context(s) found", list.TotalCount)
-		return mcp.NewToolResultStructured(contexts, fallback), nil
+		fallback := fmt.Sprintf("%d Kubernetes context(s) found", len(contexts))
+		return mcp.NewToolResultStructured(map[string]any{
+			"contexts": contexts,
+			"count":    len(contexts),
+		}, fallback), nil
 	}
 }

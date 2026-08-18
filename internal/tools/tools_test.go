@@ -85,15 +85,22 @@ func TestListDesignsTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal structured: %v", err)
 	}
-	var designs []map[string]any
-	if err := json.Unmarshal(encoded, &designs); err != nil {
+	var out struct {
+		Designs []map[string]any `json:"designs"`
+		Count   int              `json:"count"`
+		Page    int              `json:"page"`
+	}
+	if err := json.Unmarshal(encoded, &out); err != nil {
 		t.Fatalf("decode structured: %v", err)
 	}
-	if len(designs) != 1 {
-		t.Errorf("len(designs) = %d, want 1", len(designs))
+	if len(out.Designs) != 1 {
+		t.Errorf("len(designs) = %d, want 1", len(out.Designs))
 	}
-	if designs[0]["name"] != "demo" {
-		t.Errorf("design name = %v, want demo", designs[0]["name"])
+	if out.Designs[0]["name"] != "demo" {
+		t.Errorf("design name = %v, want demo", out.Designs[0]["name"])
+	}
+	if out.Count != 1 || out.Page != 1 {
+		t.Errorf("pagination = count %d page %d, want 1/1", out.Count, out.Page)
 	}
 }
 
@@ -112,6 +119,20 @@ func TestListKubernetesContextsTool(t *testing.T) {
 	}
 	if !strings.Contains(res.Content[0].(mcp.TextContent).Text, "1 Kubernetes context") {
 		t.Errorf("fallback text = %q", res.Content[0].(mcp.TextContent).Text)
+	}
+	encoded, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal structured: %v", err)
+	}
+	var out struct {
+		Contexts []map[string]any `json:"contexts"`
+		Count    int              `json:"count"`
+	}
+	if err := json.Unmarshal(encoded, &out); err != nil {
+		t.Fatalf("decode structured: %v", err)
+	}
+	if len(out.Contexts) != 1 || out.Contexts[0]["name"] != "docker-desktop" {
+		t.Errorf("contexts = %+v", out.Contexts)
 	}
 }
 
@@ -333,5 +354,19 @@ func TestGetClusterResourcesTool(t *testing.T) {
 	}
 	if !strings.Contains(res.Content[0].(mcp.TextContent).Text, "1 resource") {
 		t.Errorf("fallback text = %q", res.Content[0].(mcp.TextContent).Text)
+	}
+	encoded, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal structured: %v", err)
+	}
+	var out struct {
+		Resources []map[string]any `json:"resources"`
+		Count     int              `json:"count"`
+	}
+	if err := json.Unmarshal(encoded, &out); err != nil {
+		t.Fatalf("decode structured: %v", err)
+	}
+	if len(out.Resources) != 1 || out.Resources[0]["name"] != "web-1" {
+		t.Errorf("resources = %+v", out.Resources)
 	}
 }

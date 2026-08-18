@@ -76,6 +76,9 @@ func getClusterResourcesHandler(mc *meshery.Client) func(context.Context, mcp.Ca
 		}
 
 		fallback := fmt.Sprintf("%d resource(s) found", len(items))
-		return mcp.NewToolResultStructured(items, fallback), nil
+		return mcp.NewToolResultStructured(map[string]any{
+			"resources": items,
+			"count":     len(items),
+		}, fallback), nil
 	}
 }
