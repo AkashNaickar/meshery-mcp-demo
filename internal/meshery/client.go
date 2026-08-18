@@ -118,6 +118,10 @@ func expandPath(path string) (string, error) {
 		rest := strings.TrimPrefix(path, "~")
 		rest = strings.TrimPrefix(rest, "/")
 		rest = strings.TrimPrefix(rest, `\`)
+		// Normalize any remaining separators to the OS separator so paths
+		// written with the other platform's convention still resolve.
+		rest = strings.ReplaceAll(rest, `\`, string(filepath.Separator))
+		rest = strings.ReplaceAll(rest, "/", string(filepath.Separator))
 		path = filepath.Join(home, rest)
 	}
 	return filepath.Clean(path), nil
