@@ -124,6 +124,9 @@ func TestDeployDesign(t *testing.T) {
 		if r.URL.Query().Get("dryRun") != "false" {
 			t.Errorf("dryRun = %q, want false", r.URL.Query().Get("dryRun"))
 		}
+		if got := r.URL.Query()["contexts"]; len(got) != 1 || got[0] != "ctx-1" {
+			t.Errorf("contexts query = %v, want [ctx-1]", got)
+		}
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
@@ -152,9 +155,23 @@ func TestDeployDesign(t *testing.T) {
 	if gotBody["pattern_file"] != "version: 1.0\nservices: []" {
 		t.Errorf("pattern_file body = %v", gotBody["pattern_file"])
 	}
-	contexts, _ := gotBody["contexts"].([]any)
-	if len(contexts) != 1 || contexts[0] != "ctx-1" {
-		t.Errorf("contexts body = %v", gotBody["contexts"])
+	if _, ok := gotBody["contexts"]; ok {
+		t.Errorf("contexts must be a query param, not body; got body contexts = %v", gotBody["contexts"])
+	}
+}
+
+func TestDeployDesignDefaultsToAllContexts(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("contexts"); got != "all" {
+			t.Errorf("contexts query = %q, want all", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"d1","name":"x","dryRun":false}`))
+	})
+
+	c := newTestClient(t, srv)
+	if _, err := c.DeployDesign(context.Background(), DeployRequest{PatternFile: "version: 1.0"}); err != nil {
+		t.Fatalf("DeployDesign: %v", err)
 	}
 }
 

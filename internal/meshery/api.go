@@ -38,15 +38,19 @@ type DesignList struct {
 	Patterns []Design `json:"patterns"`
 }
 
-// ListDesigns returns the designs stored on the Meshery Server.
+// ListDesigns returns the designs stored on the Meshery Server. Explicit
+// pagination is required: Meshery defaults pageSize to 0 when omitted, which
+// yields an empty SQL LIMIT and an empty result.
 func (c *Client) ListDesigns(ctx context.Context, page, pageSize int) (*DesignList, error) {
 	query := url.Values{}
-	if page > 0 {
-		query.Set("page", strconv.Itoa(page))
+	if page < 0 {
+		page = 0
 	}
-	if pageSize > 0 {
-		query.Set("pagesize", strconv.Itoa(pageSize))
+	if pageSize <= 0 {
+		pageSize = 50
 	}
+	query.Set("page", strconv.Itoa(page))
+	query.Set("pagesize", strconv.Itoa(pageSize))
 
 	var out DesignList
 	if err := c.request(ctx, "GET", "/api/pattern", query, nil, &out); err != nil {
@@ -123,20 +127,29 @@ type DeployedItem struct {
 }
 
 // DeployDesign deploys (or dry-run validates) a design to the target contexts.
+//
+// The target Kubernetes contexts are passed as the `contexts` query parameter
+// (or `all` when none are specified), because Meshery's KubernetesMiddleware
+// selects the deployment target from that query parameter rather than the
+// request body.
 func (c *Client) DeployDesign(ctx context.Context, req DeployRequest) (*DeployResponse, error) {
 	query := url.Values{}
 	query.Set("dryRun", strconv.FormatBool(req.DryRun))
 	query.Set("skipCRD", strconv.FormatBool(req.SkipCRD))
 	query.Set("upgrade", strconv.FormatBool(req.Upgrade))
+	if len(req.Contexts) > 0 {
+		for _, ctxID := range req.Contexts {
+			query.Add("contexts", ctxID)
+		}
+	} else {
+		query.Set("contexts", "all")
+	}
 
 	body := map[string]any{
 		"pattern_file": req.PatternFile,
 	}
 	if req.PatternID != "" {
 		body["pattern_id"] = req.PatternID
-	}
-	if len(req.Contexts) > 0 {
-		body["contexts"] = req.Contexts
 	}
 
 	var out DeployResponse
