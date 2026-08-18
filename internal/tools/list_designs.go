@@ -31,6 +31,7 @@ func registerListDesigns(s *server.MCPServer, mc *meshery.Client) error {
 		mcp.WithDescription("List Meshery designs stored on the connected Meshery Server."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithString("search", mcp.Description("Optional free-text filter applied by the server.")),
 		mcp.WithNumber("page", mcp.Description("Page number to fetch (1-based).")),
 		mcp.WithNumber("page_size", mcp.Description("Number of designs per page.")),
 	)
@@ -44,7 +45,11 @@ func listDesignsHandler(mc *meshery.Client) func(context.Context, mcp.CallToolRe
 		page := int(req.GetFloat("page", 1))
 		pageSize := int(req.GetFloat("page_size", 25))
 
-		list, err := mc.ListDesigns(ctx, page, pageSize)
+		list, err := mc.SearchDesigns(ctx, meshery.DesignSearchOptions{
+			Search:   req.GetString("search", ""),
+			Page:     page,
+			PageSize: pageSize,
+		})
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("list designs", err), nil
 		}
@@ -64,7 +69,7 @@ func listDesignsHandler(mc *meshery.Client) func(context.Context, mcp.CallToolRe
 			})
 		}
 
-		fallback := fmt.Sprintf("%d designs found (page %d, page size %d)", list.Count, page, pageSize)
+		fallback := fmt.Sprintf("%d designs found (page %d, page size %d)", len(designs), page, pageSize)
 		return mcp.NewToolResultStructured(designs, fallback), nil
 	}
 }

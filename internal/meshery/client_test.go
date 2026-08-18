@@ -17,10 +17,12 @@ package meshery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -284,5 +286,319 @@ func TestExpandPathTilde(t *testing.T) {
 	}
 	if got3 != abs {
 		t.Errorf("expandPath(abs) = %q, want %q", got3, abs)
+	}
+}
+
+func TestParsePatternComponents(t *testing.T) {
+	const design = `name: nginx-demo
+schemaVersion: designs.meshery.io/v1beta3
+components:
+- name: nginx-demo
+  type: Deployment
+  version: 1.29.0
+  model: kubernetes
+- name: nginx-demo
+  type: Service
+  version: 1.29.0
+  model: kubernetes
+`
+
+	got := ParsePatternComponents(design)
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].Kind != "Deployment" || got[0].Name != "nginx-demo" {
+		t.Errorf("first = %+v", got[0])
+	}
+	if got[1].Kind != "Service" {
+		t.Errorf("second kind = %q, want Service", got[1].Kind)
+	}
+}
+
+func TestParsePatternComponentsInvalidYAML(t *testing.T) {
+	if got := ParsePatternComponents("not: [valid"); got != nil {
+		t.Errorf("invalid YAML = %v, want nil", got)
+	}
+	// Empty input parses to a design with no components.
+	if got := ParsePatternComponents(""); len(got) != 0 {
+		t.Errorf("empty = %v, want empty slice", got)
+	}
+}
+
+func TestDeployResponseEmpty(t *testing.T) {
+	// The v1.0.66 no-op signature: no items, no error, null dry-run response.
+	noop := DeployResponse{DryRunResponse: []byte("null")}
+	if !noop.Empty() {
+		t.Error("null dryRunResponse should be Empty")
+	}
+
+	// A response with deployed items is not empty.
+	populated := DeployResponse{
+		Deployed:       []DeployedItem{{Kind: "Deployment", Name: "emoji"}},
+		DryRunResponse: []byte(`{"deployed":[]}`),
+	}
+	if populated.Empty() {
+		t.Error("populated response should not be Empty")
+	}
+
+	// An error makes it not empty.
+	errored := DeployResponse{Error: "boom", DryRunResponse: []byte("null")}
+	if errored.Empty() {
+		t.Error("errored response should not be Empty")
+	}
+
+	// Absent dry-run response (not present in JSON) counts as empty.
+	absent := DeployResponse{}
+	if !absent.Empty() {
+		t.Error("absent dryRunResponse should be Empty")
+	}
+}
+
+// stubTopologySource implements TopologySource for tests.
+type stubTopologySource struct {
+	components []TopologyComponent
+}
+
+func (s stubTopologySource) ListTopology(_ context.Context) ([]TopologyComponent, error) {
+	return s.components, nil
+}
+
+func TestTopologyFallsBackToSource(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// MeshSync returns no components.
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"evaluated":false,"components":[],"relationships":[]}`))
+	})
+
+	c := newTestClient(t, srv)
+	c.SetTopologySource(stubTopologySource{components: []TopologyComponent{
+		{ID: "n1", Kind: "Deployment", Name: "nginx-demo"},
+		{ID: "n2", Kind: "Service", Name: "nginx-demo"},
+	}})
+
+	topo, err := c.Topology(context.Background(), "ks-1")
+	if err != nil {
+		t.Fatalf("Topology: %v", err)
+	}
+	if len(topo.Components) != 2 {
+		t.Fatalf("len(Components) = %d, want 2 (from fallback)", len(topo.Components))
+	}
+	if topo.Components[0].Name != "nginx-demo" {
+		t.Errorf("component name = %q, want nginx-demo", topo.Components[0].Name)
+	}
+	if !topo.Evaluated {
+		t.Errorf("Evaluated = false, want true (fallback marks evaluated)")
+	}
+}
+
+func TestTopologyNoFallbackWhenPopulated(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"evaluated":true,"components":[{"id":"c1","kind":"Deployment","name":"emoji"}]}`))
+	})
+
+	c := newTestClient(t, srv)
+	// A fallback that would error if called; it must not be invoked.
+	c.SetTopologySource(stubTopologySource{})
+
+	topo, err := c.Topology(context.Background(), "ks-1")
+	if err != nil {
+		t.Fatalf("Topology: %v", err)
+	}
+	if len(topo.Components) != 1 {
+		t.Fatalf("len(Components) = %d, want 1 (from server, not fallback)", len(topo.Components))
+	}
+}
+
+func TestValidateDesign(t *testing.T) {
+	// Server-side validation returns a result; local structural validation
+	// must also run. Here the design is structurally invalid (no type).
+	const design = "name: demo\nschemaVersion: designs.meshery.io/v1beta3\ncomponents:\n- name: web\n"
+
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/pattern/validate" {
+			t.Errorf("path = %q, want /api/pattern/validate", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"valid":true,"issues":[]}`))
+	})
+
+	c := newTestClient(t, srv)
+	res, err := c.ValidateDesign(context.Background(), design)
+	if err != nil {
+		t.Fatalf("ValidateDesign: %v", err)
+	}
+	// Structural check reports the missing type even if the server says valid.
+	found := false
+	for _, iss := range res.Issues {
+		if iss.Severity == "error" && strings.Contains(iss.Message, "no type") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected structural 'no type' issue, got %+v", res.Issues)
+	}
+}
+
+func TestValidateDesignFallsBackToLocal(t *testing.T) {
+	// When the server-side validation endpoint is unreachable, validation
+	// still returns a structural result without erroring.
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"gone"}`, http.StatusNotFound)
+	})
+
+	const design = "name: demo\nschemaVersion: designs.meshery.io/v1beta3\ncomponents:\n- name: web\n  type: Deployment\n"
+
+	c := newTestClient(t, srv)
+	res, err := c.ValidateDesign(context.Background(), design)
+	if err != nil {
+		t.Fatalf("ValidateDesign: %v", err)
+	}
+	if !res.Valid {
+		t.Errorf("structurally valid design should be valid, got %+v", res.Issues)
+	}
+}
+
+func TestUndeployDesign(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/pattern/deploy" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if r.URL.Query().Get("delete") != "true" {
+			t.Errorf("delete = %q, want true", r.URL.Query().Get("delete"))
+		}
+		if got := r.URL.Query().Get("force"); got != "true" {
+			t.Errorf("force = %q, want true", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"d1","name":"demo","removed":[{"kind":"Deployment","name":"web","status":"deleted"}]}`))
+	})
+
+	c := newTestClient(t, srv)
+	resp, err := c.UndeployDesign(context.Background(), UndeployRequest{
+		PatternID: "d1",
+		Contexts:  []string{"ctx-1"},
+		Force:     true,
+	})
+	if err != nil {
+		t.Fatalf("UndeployDesign: %v", err)
+	}
+	if len(resp.Removed) != 1 || resp.Removed[0].Name != "web" {
+		t.Errorf("Removed = %+v", resp.Removed)
+	}
+}
+
+func TestGetDesign(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/pattern/abc-123" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"abc-123","name":"demo","pattern_file":"name: demo","type":"Kubernetes Manifest"}`))
+	})
+
+	c := newTestClient(t, srv)
+	d, err := c.GetDesign(context.Background(), "abc-123")
+	if err != nil {
+		t.Fatalf("GetDesign: %v", err)
+	}
+	if d.ID != "abc-123" || d.Name != "demo" {
+		t.Errorf("design = %+v", d)
+	}
+	if d.SourceType != "Kubernetes Manifest" {
+		t.Errorf("source type = %q", d.SourceType)
+	}
+}
+
+func TestGetClusterResources(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/system/meshsync/resources" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"resources":[
+			{"kind":"Pod","name":"web-1","namespace":"default","status":"Running"},
+			{"kind":"Service","name":"web","namespace":"default"}
+		]}`))
+	})
+
+	c := newTestClient(t, srv)
+	resources, err := c.GetClusterResources(context.Background(), "ks-1", "default", "")
+	if err != nil {
+		t.Fatalf("GetClusterResources: %v", err)
+	}
+	if len(resources) != 2 {
+		t.Fatalf("len = %d, want 2", len(resources))
+	}
+	if resources[0].Kind != "Pod" || resources[0].Name != "web-1" {
+		t.Errorf("first resource = %+v", resources[0])
+	}
+}
+
+func TestGetClusterResourcesFallsBackToSource(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"resources":[]}`))
+	})
+
+	c := newTestClient(t, srv)
+	c.SetTopologySource(stubTopologySource{components: []TopologyComponent{
+		{ID: "1", Kind: "Deployment", Name: "nginx-demo"},
+		{ID: "2", Kind: "Pod", Name: "p-1"},
+		{ID: "3", Kind: "Pod", Name: "p-2"},
+	}})
+
+	resources, err := c.GetClusterResources(context.Background(), "ks-1", "", "Pod")
+	if err != nil {
+		t.Fatalf("GetClusterResources: %v", err)
+	}
+	if len(resources) != 2 {
+		t.Fatalf("len = %d, want 2 (pods from fallback)", len(resources))
+	}
+	for _, r := range resources {
+		if r.Kind != "Pod" {
+			t.Errorf("kind = %q, want Pod", r.Kind)
+		}
+	}
+}
+
+func TestRequestMapsAuthFailureCode(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	})
+
+	c := newTestClient(t, srv)
+	_, err := c.ListDesigns(context.Background(), 1, 25)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error type = %T, want *APIError", err)
+	}
+	if apiErr.Code != ErrCodeAuthFailure {
+		t.Errorf("code = %d, want %d", apiErr.Code, ErrCodeAuthFailure)
+	}
+}
+
+func TestSearchDesignsSendsSearch(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("search") != "nginx" {
+			t.Errorf("search = %q, want nginx", r.URL.Query().Get("search"))
+		}
+		if r.URL.Query().Get("pagesize") != "10" {
+			t.Errorf("pagesize = %q, want 10", r.URL.Query().Get("pagesize"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"patterns":[]}`))
+	})
+
+	c := newTestClient(t, srv)
+	list, err := c.SearchDesigns(context.Background(), DesignSearchOptions{Search: "nginx", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("SearchDesigns: %v", err)
+	}
+	if list == nil {
+		t.Fatal("SearchDesigns returned nil")
 	}
 }

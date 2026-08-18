@@ -34,7 +34,16 @@ func Register(s *server.MCPServer, mc *meshery.Client) error {
 	if err := registerListKubernetesContexts(s, mc); err != nil {
 		return err
 	}
+	if err := registerValidateDesign(s, mc); err != nil {
+		return err
+	}
 	if err := registerDeployDesign(s, mc); err != nil {
+		return err
+	}
+	if err := registerUndeployDesign(s, mc); err != nil {
+		return err
+	}
+	if err := registerGetClusterResources(s, mc); err != nil {
 		return err
 	}
 	return nil

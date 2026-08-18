@@ -56,3 +56,35 @@ func TestRegisterAndGetPrompt(t *testing.T) {
 		}
 	}
 }
+
+func TestClusterHealthAuditPrompt(t *testing.T) {
+	s := server.NewMCPServer("test", "0.0.0", server.WithHooks(&server.Hooks{}))
+	if err := Register(s); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	prompts := s.ListPrompts()
+	entry, ok := prompts["cluster_health_audit"]
+	if !ok {
+		t.Fatalf("cluster_health_audit prompt not registered")
+	}
+
+	result, err := entry.Handler(context.Background(), mcp.GetPromptRequest{
+		Params: mcp.GetPromptParams{Name: "cluster_health_audit"},
+	})
+	if err != nil {
+		t.Fatalf("get prompt: %v", err)
+	}
+	if len(result.Messages) != 1 {
+		t.Fatalf("len(Messages) = %d, want 1", len(result.Messages))
+	}
+	text, ok := result.Messages[0].Content.(mcp.TextContent)
+	if !ok {
+		t.Fatalf("content type = %T", result.Messages[0].Content)
+	}
+	for _, want := range []string{"get_cluster_resources", "topology", "drift"} {
+		if !strings.Contains(text.Text, want) {
+			t.Errorf("prompt text missing %q", want)
+		}
+	}
+}

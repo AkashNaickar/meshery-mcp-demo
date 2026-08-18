@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -119,5 +120,82 @@ func TestTopologyHandlerBadURI(t *testing.T) {
 		Params: mcp.ReadResourceParams{URI: "meshery://designs/x"},
 	}); err == nil {
 		t.Fatal("expected error for unsupported URI")
+	}
+}
+
+func TestDesignHandlerSanitizes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/pattern/abc-123" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"abc-123","name":"demo","pattern_file":"name: demo","type":"Kubernetes Manifest"}`))
+	}))
+	defer srv.Close()
+
+	mc, err := meshery.New(meshery.Options{BaseURL: srv.URL, Token: "test-token"})
+	if err != nil {
+		t.Fatalf("meshery.New: %v", err)
+	}
+
+	handler := designHandler(mc)
+	contents, err := handler(context.Background(), mcp.ReadResourceRequest{
+		Params: mcp.ReadResourceParams{URI: "meshery://designs/abc-123"},
+	})
+	if err != nil {
+		t.Fatalf("designHandler: %v", err)
+	}
+	if len(contents) != 1 {
+		t.Fatalf("len(contents) = %d, want 1", len(contents))
+	}
+	text, ok := contents[0].(mcp.TextResourceContents)
+	if !ok {
+		t.Fatalf("content type = %T", contents[0])
+	}
+	if !strings.Contains(text.Text, "abc-123") {
+		t.Errorf("design text missing id: %s", text.Text)
+	}
+}
+
+func TestDesignHandlerBadURI(t *testing.T) {
+	mc, err := meshery.New(meshery.Options{BaseURL: "http://127.0.0.1:1", Token: "test-token"})
+	if err != nil {
+		t.Fatalf("meshery.New: %v", err)
+	}
+
+	handler := designHandler(mc)
+	if _, err := handler(context.Background(), mcp.ReadResourceRequest{
+		Params: mcp.ReadResourceParams{URI: "meshery://clusters/x/topology"},
+	}); err == nil {
+		t.Fatal("expected error for unsupported URI")
+	}
+}
+
+func TestParseDesignID(t *testing.T) {
+	tests := []struct {
+		uri     string
+		want    string
+		wantErr bool
+	}{
+		{uri: "meshery://designs/abc-123", want: "abc-123"},
+		{uri: "meshery://designs/a_b.c", want: "a_b.c"},
+		{uri: "meshery://clusters/x/topology", wantErr: true},
+		{uri: "meshery://designs/a/b", wantErr: true},
+	}
+	for _, tt := range tests {
+		got, err := parseDesignID(tt.uri)
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("parseDesignID(%q): expected error", tt.uri)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parseDesignID(%q): %v", tt.uri, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("parseDesignID(%q) = %q, want %q", tt.uri, got, tt.want)
+		}
 	}
 }

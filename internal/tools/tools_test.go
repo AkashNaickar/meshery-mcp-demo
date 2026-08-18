@@ -160,3 +160,178 @@ func TestServerInfoTool(t *testing.T) {
 		t.Errorf("server_info text = %q", res.Content[0].(mcp.TextContent).Text)
 	}
 }
+
+func TestDeployDesignToolEmptyFallback(t *testing.T) {
+	// The v1.0.66 no-op signature: Meshery returns a null dry-run response with
+	// no deployed items. The handler should fall back to the design's declared
+	// components so the client still gets a meaningful result.
+	s := newTestMC(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/pattern/deploy" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"d1","name":"demo","dryRun":true,"dryRunResponse":null}`))
+	})
+
+	const design = "name: demo\nschemaVersion: designs.meshery.io/v1beta3\ncomponents:\n- name: web\n  type: Deployment\n- name: web-svc\n  type: Service\n"
+
+	res := callTool(t, s, "deploy_design", map[string]any{
+		"pattern_file": design,
+		"dry_run":      true,
+	})
+	if res.IsError {
+		t.Fatalf("unexpected error result")
+	}
+
+	// Structured content should list the locally-parsed components.
+	encoded, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal structured: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(encoded, &parsed); err != nil {
+		t.Fatalf("decode structured: %v", err)
+	}
+
+	deployed, ok := parsed["deployed"].([]any)
+	if !ok || len(deployed) != 2 {
+		t.Fatalf("deployed = %v, want 2 fallback components", parsed["deployed"])
+	}
+	if _, ok := parsed["note"]; !ok {
+		t.Errorf("expected fallback note")
+	}
+
+	text := res.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "validated (dry-run) 2 resource") {
+		t.Errorf("fallback text = %q", text)
+	}
+}
+
+func TestDeployDesignToolNoFallbackWhenPopulated(t *testing.T) {
+	// When Meshery returns real deployed items, the fallback must not fire.
+	s := newTestMC(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"d1","name":"demo","deployed":[{"kind":"Deployment","name":"emoji","status":"applied"}]}`))
+	})
+
+	res := callTool(t, s, "deploy_design", map[string]any{
+		"pattern_file": "name: demo\ncomponents:\n- name: other\n  type: Deployment\n",
+		"dry_run":      false,
+	})
+	if res.IsError {
+		t.Fatalf("unexpected error result")
+	}
+
+	text := res.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "deployed 1 resource") {
+		t.Errorf("fallback text = %q", text)
+	}
+	if strings.Contains(text, "parsed locally") {
+		t.Errorf("fallback should not fire when server returns items: %q", text)
+	}
+}
+
+func TestValidateDesignTool(t *testing.T) {
+	s := newTestMC(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/pattern/validate" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"valid":true,"issues":[]}`))
+	})
+
+	res := callTool(t, s, "validate_design", map[string]any{
+		"pattern_file": "name: demo\nschemaVersion: designs.meshery.io/v1beta3\ncomponents:\n- name: web\n  type: Deployment\n",
+	})
+	if res.IsError {
+		t.Fatalf("unexpected error result")
+	}
+	if !strings.Contains(res.Content[0].(mcp.TextContent).Text, "valid") {
+		t.Errorf("fallback text = %q", res.Content[0].(mcp.TextContent).Text)
+	}
+}
+
+func TestValidateDesignToolMissingPattern(t *testing.T) {
+	s := newTestMC(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("server should not be called")
+	})
+
+	res := callTool(t, s, "validate_design", map[string]any{})
+	if !res.IsError {
+		t.Fatalf("expected error for missing pattern_file")
+	}
+}
+
+func TestValidateDesignToolStructuralError(t *testing.T) {
+	// Server returns valid, but the design is structurally invalid (no type).
+	s := newTestMC(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"valid":true,"issues":[]}`))
+	})
+
+	res := callTool(t, s, "validate_design", map[string]any{
+		"pattern_file": "name: demo\ncomponents:\n- name: web\n",
+	})
+	if res.IsError {
+		t.Fatalf("unexpected error result")
+	}
+	// Structured content should carry the error issue.
+	encoded, _ := json.Marshal(res.StructuredContent)
+	if !strings.Contains(string(encoded), "no type") {
+		t.Errorf("structured content missing structural issue: %s", encoded)
+	}
+}
+
+func TestUndeployDesignTool(t *testing.T) {
+	s := newTestMC(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("delete") != "true" {
+			t.Errorf("delete = %q", r.URL.Query().Get("delete"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"d1","name":"demo","removed":[{"kind":"Deployment","name":"web","status":"deleted"}]}`))
+	})
+
+	res := callTool(t, s, "undeploy_design", map[string]any{
+		"pattern_id": "d1",
+		"context_id": "ctx-1",
+		"force":      true,
+	})
+	if res.IsError {
+		t.Fatalf("unexpected error result")
+	}
+	if !strings.Contains(res.Content[0].(mcp.TextContent).Text, "undeployed 1 resource") {
+		t.Errorf("fallback text = %q", res.Content[0].(mcp.TextContent).Text)
+	}
+}
+
+func TestUndeployDesignToolMissingArgs(t *testing.T) {
+	s := newTestMC(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("server should not be called")
+	})
+
+	res := callTool(t, s, "undeploy_design", map[string]any{})
+	if !res.IsError {
+		t.Fatalf("expected error for missing pattern_id/pattern_file")
+	}
+}
+
+func TestGetClusterResourcesTool(t *testing.T) {
+	s := newTestMC(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/system/meshsync/resources" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"resources":[{"kind":"Pod","name":"web-1","namespace":"default","status":"Running"}]}`))
+	})
+
+	res := callTool(t, s, "get_cluster_resources", map[string]any{
+		"context_id": "ctx-1",
+		"namespace":  "default",
+	})
+	if res.IsError {
+		t.Fatalf("unexpected error result")
+	}
+	if !strings.Contains(res.Content[0].(mcp.TextContent).Text, "1 resource") {
+		t.Errorf("fallback text = %q", res.Content[0].(mcp.TextContent).Text)
+	}
+}

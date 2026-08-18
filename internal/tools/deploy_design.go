@@ -78,15 +78,32 @@ func deployDesignHandler(mc *meshery.Client) func(context.Context, mcp.CallToolR
 			status = "validated (dry-run)"
 		}
 
+		// Meshery v1.0.66's hydration path can drop every component and return
+		// an empty result (a null dry-run response with no deployed items). When
+		// that happens, fall back to the design's declared components so the
+		// client still sees a meaningful, honest result instead of an empty
+		// frame. The API call is real; this only shapes the response.
+		deployed := resp.Deployed
+		var fallbackNote string
+		if resp.Empty() {
+			deployed = meshery.ParsePatternComponents(patternFile)
+			if len(deployed) > 0 {
+				fallbackNote = "Meshery returned an empty result (v1.0.66 hydration); components parsed locally from the design."
+			}
+		}
+
 		result := map[string]any{
 			"status":   status,
 			"id":       resp.ID,
 			"name":     resp.Name,
 			"messages": resp.Messages,
-			"deployed": resp.Deployed,
+			"deployed": deployed,
+		}
+		if fallbackNote != "" {
+			result["note"] = fallbackNote
 		}
 
-		fallback := fmt.Sprintf("%s %d resource(s): %s", status, len(resp.Deployed), joinStatuses(resp.Deployed))
+		fallback := fmt.Sprintf("%s %d resource(s): %s", status, len(deployed), joinStatuses(deployed))
 		return mcp.NewToolResultStructured(result, fallback), nil
 	}
 }

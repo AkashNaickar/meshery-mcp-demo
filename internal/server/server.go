@@ -34,7 +34,12 @@ import (
 // New creates an MCP server with all registered MCP surfaces, backed by the
 // shared Meshery client.
 func New(mc *meshery.Client) (*server.MCPServer, error) {
-	s := server.NewMCPServer(version.Name, version.Version, server.WithHooks(&server.Hooks{}))
+	s := server.NewMCPServer(version.Name, version.Version,
+		server.WithHooks(&server.Hooks{}),
+		// Enable the resources.subscribe capability so clients can subscribe to
+		// topology updates and receive resources/updated notifications.
+		server.WithResourceCapabilities(true, false),
+	)
 
 	registry := NewRegistry(
 		RegistrantFunc(func(s *server.MCPServer) error {

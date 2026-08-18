@@ -17,6 +17,7 @@ package meshery
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strconv"
 	"time"
@@ -42,10 +43,22 @@ type DesignList struct {
 // pagination is required: Meshery defaults pageSize to 0 when omitted, which
 // yields an empty SQL LIMIT and an empty result.
 func (c *Client) ListDesigns(ctx context.Context, page, pageSize int) (*DesignList, error) {
+	return c.SearchDesigns(ctx, DesignSearchOptions{Page: page, PageSize: pageSize})
+}
+
+// SearchDesigns returns designs filtered by an optional free-text search,
+// with explicit pagination. Meshery defaults pageSize to 0 when omitted,
+// which yields an empty SQL LIMIT and an empty result.
+func (c *Client) SearchDesigns(ctx context.Context, opts DesignSearchOptions) (*DesignList, error) {
 	query := url.Values{}
+	if opts.Search != "" {
+		query.Set("search", opts.Search)
+	}
+	page := opts.Page
 	if page < 0 {
 		page = 0
 	}
+	pageSize := opts.PageSize
 	if pageSize <= 0 {
 		pageSize = 50
 	}
@@ -58,6 +71,157 @@ func (c *Client) ListDesigns(ctx context.Context, page, pageSize int) (*DesignLi
 	}
 	return &out, nil
 }
+
+// GetDesign returns a single stored design's raw PatternFile payload.
+func (c *Client) GetDesign(ctx context.Context, id string) (*DesignDetail, error) {
+	var raw struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		PatternFile string `json:"pattern_file"`
+		Type        string `json:"type"`
+	}
+	if err := c.request(ctx, "GET", "/api/pattern/"+id, nil, nil, &raw); err != nil {
+		return nil, err
+	}
+	return &DesignDetail{
+		ID:          raw.ID,
+		Name:        raw.Name,
+		PatternFile: raw.PatternFile,
+		SourceType:  raw.Type,
+	}, nil
+}
+
+// ValidateDesign lints a PatternFile YAML against the Meshery validation
+// endpoint without applying it to any cluster. When Meshery's validation
+// endpoint is not available it returns a structural validation result.
+func (c *Client) ValidateDesign(ctx context.Context, patternFile string) (*ValidationResult, error) {
+	// Local structural validation is always performed and is the source of
+	// truth for schema version and component shape.
+	issues := validatePatternStructure(patternFile)
+
+	// Best-effort server-side validation: Meshery's schema linter may reject
+	// designs for reasons a local check cannot see (unknown models, versions).
+	// Server findings are merged with (not replacing) local findings.
+	if patternFile != "" {
+		if serverResult, err := c.remoteValidate(ctx, patternFile); err == nil {
+			issues = append(issues, serverResult.Issues...)
+		}
+	}
+
+	valid := true
+	for _, iss := range issues {
+		if iss.Severity == "error" {
+			valid = false
+			break
+		}
+	}
+	return &ValidationResult{Valid: valid, Issues: issues}, nil
+}
+
+// remoteValidate asks the Meshery server to validate a PatternFile, returning
+// a ValidationResult. It is best-effort; callers ignore errors.
+func (c *Client) remoteValidate(ctx context.Context, patternFile string) (*ValidationResult, error) {
+	body := map[string]any{"pattern_file": patternFile}
+	var out struct {
+		Valid  bool              `json:"valid"`
+		Issues []ValidationIssue `json:"issues"`
+	}
+	if err := c.request(ctx, "POST", "/api/pattern/validate", nil, body, &out); err != nil {
+		return nil, err
+	}
+	return &ValidationResult{Valid: out.Valid, Issues: out.Issues}, nil
+}
+
+// UndeployDesign tears down the resources defined by a design in the target
+// contexts. It maps to Meshery's deploy endpoint with delete=true.
+func (c *Client) UndeployDesign(ctx context.Context, req UndeployRequest) (*UndeployResponse, error) {
+	query := url.Values{}
+	query.Set("delete", "true")
+	if req.Force {
+		query.Set("force", "true")
+	}
+	if len(req.Contexts) > 0 {
+		for _, ctxID := range req.Contexts {
+			query.Add("contexts", ctxID)
+		}
+	} else {
+		query.Set("contexts", "all")
+	}
+
+	body := map[string]any{}
+	if req.PatternID != "" {
+		body["pattern_id"] = req.PatternID
+	}
+	if req.PatternFile != "" {
+		body["pattern_file"] = req.PatternFile
+	}
+
+	var out UndeployResponse
+	if err := c.request(ctx, "POST", "/api/pattern/deploy", query, body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetClusterResources returns MeshSync-discovered resources for a cluster,
+// filtered by kind when requested. The returned Data maps are sanitized so
+// credentials never reach the agent.
+func (c *Client) GetClusterResources(ctx context.Context, clusterID, namespace, kind string) ([]ClusterResource, error) {
+	query := url.Values{}
+	if clusterID != "" {
+		query.Set("clusterId", clusterID)
+	}
+	if namespace != "" {
+		query.Set("namespace", namespace)
+	}
+	if kind != "" {
+		query.Set("kind", kind)
+	}
+	query.Set("page", "0")
+	query.Set("pagesize", "500")
+
+	var raw struct {
+		Resources []ClusterResource `json:"resources"`
+	}
+	if err := c.request(ctx, "GET", "/api/system/meshsync/resources", query, nil, &raw); err != nil {
+		return nil, err
+	}
+
+	// Fall back to the live Kubernetes API when MeshSync has not synced the
+	// cluster (a known v1.0.66 issue).
+	if len(raw.Resources) == 0 && c.topologySource != nil {
+		components, err := c.topologySource.ListTopology(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]ClusterResource, 0, len(components))
+		for _, comp := range components {
+			if kind != "" && comp.Kind != kind {
+				continue
+			}
+			out = append(out, ClusterResource{Kind: comp.Kind, Name: comp.Name, Status: "discovered"})
+		}
+		return out, nil
+	}
+
+	out := make([]ClusterResource, 0, len(raw.Resources))
+	for _, r := range raw.Resources {
+		if namespace != "" && r.Namespace != namespace {
+			continue
+		}
+		out = append(out, ClusterResource{
+			Kind:      r.Kind,
+			Name:      r.Name,
+			Namespace: r.Namespace,
+			Status:    r.Status,
+			Labels:    r.Labels,
+			Data:      r.Data,
+		})
+	}
+	return out, nil
+}
+
+// Topology is the MeshSync-discovered state of a cluster rendered as a design.
 
 // KubernetesContext is a Kubernetes context managed by Meshery.
 type KubernetesContext struct {
@@ -116,6 +280,23 @@ type DeployResponse struct {
 	Invalid    []DeployedItem  `json:"invalid"`
 	Error      string          `json:"error"`
 	Events     json.RawMessage `json:"events"`
+	// DryRunResponse carries the raw dry-run payload. Meshery v1.0.66 returns
+	// literal null here when its hydration path drops every component, which
+	// signals an empty (no-op) result rather than a real deployment plan.
+	DryRunResponse json.RawMessage `json:"dryRunResponse"`
+}
+
+// Empty reports whether the server returned no actionable result. This is the
+// signature of Meshery v1.0.66's hydration no-op: no deployed, undeployed, or
+// invalid items, no error, and a null (or absent) dry-run response.
+func (r *DeployResponse) Empty() bool {
+	if r.Error != "" {
+		return false
+	}
+	if len(r.Deployed) > 0 || len(r.UnDeployed) > 0 || len(r.Invalid) > 0 {
+		return false
+	}
+	return len(r.DryRunResponse) == 0 || string(r.DryRunResponse) == "null"
 }
 
 // DeployedItem is one resource applied or planned by a deployment.
@@ -176,6 +357,14 @@ type TopologyComponent struct {
 	Name string `json:"name"`
 }
 
+// TopologySource supplies a cluster's live topology. It lets the Meshery client
+// fall back to reading cluster state directly (e.g. via client-go) when
+// MeshSync has not populated the server, which happens on some Meshery
+// versions.
+type TopologySource interface {
+	ListTopology(ctx context.Context) ([]TopologyComponent, error)
+}
+
 // Topology returns the live MeshSync topology for a cluster, rendered as a
 // design graph via GET /api/system/meshsync/resources?asDesign=true.
 func (c *Client) Topology(ctx context.Context, clusterID string) (*Topology, error) {
@@ -193,6 +382,19 @@ func (c *Client) Topology(ctx context.Context, clusterID string) (*Topology, err
 	}
 	if err := c.request(ctx, "GET", "/api/system/meshsync/resources", query, nil, &raw); err != nil {
 		return nil, err
+	}
+
+	// MeshSync may not have synced the cluster (a known Meshery v1.0.66 issue),
+	// in which case the server returns no components. When a fallback source is
+	// configured, use it to read the live cluster state directly.
+	if len(raw.Components) == 0 && c.topologySource != nil {
+		components, err := c.topologySource.ListTopology(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("read topology via fallback: %w", err)
+		}
+		raw.Components = components
+		raw.Relationships = nil
+		raw.Evaluated = true
 	}
 
 	return &Topology{

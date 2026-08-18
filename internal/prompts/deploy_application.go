@@ -25,7 +25,10 @@ import (
 
 // Register registers every prompt exposed by the server.
 func Register(s *server.MCPServer) error {
-	return registerDeployApplication(s)
+	if err := registerDeployApplication(s); err != nil {
+		return err
+	}
+	return registerClusterHealthAudit(s)
 }
 
 // registerDeployApplication registers a guided prompt for deploying a design.
@@ -46,14 +49,17 @@ To deploy an application design:
 
 1. Call list_kubernetes_contexts to see which clusters Meshery is managing.
 2. Call list_designs to find the design to deploy, or accept a design YAML from the user.
-3. Call deploy_design with the pattern_file argument set to the design YAML, and
+3. Call validate_design with the pattern_file to confirm the design is valid.
+4. Call deploy_design with the pattern_file argument set to the design YAML, and
    context_id set to the target cluster if one was chosen.
-4. If the user wants to validate first, set dry_run to true.
-5. After deployment, confirm the result by reading the cluster topology resource:
+5. Before applying, set dry_run to true to preview the result and confirm with
+   the user before a real deployment.
+6. After deployment, verify health by calling get_cluster_resources, and confirm
+   the result by reading the cluster topology resource:
    meshery://clusters/{cluster_id}/topology.
 
 Never invent designs, contexts, or IDs. Work only with data returned by the tools
-and resources.`
+and resources. Do not deploy without explicit user confirmation.`
 
 	return &mcp.GetPromptResult{
 		Description: "Guided workflow for deploying a design to a Kubernetes context managed by Meshery.",

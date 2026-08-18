@@ -28,6 +28,13 @@ const (
 
 	// DefaultHTTPAddr is the default listen address for the streamable HTTP transport.
 	DefaultHTTPAddr = "127.0.0.1:8080"
+
+	// DefaultKubeconfigPath is the default path of the Kubernetes kubeconfig.
+	DefaultKubeconfigPath = "~/.kube/config"
+
+	// DefaultKubeconfigContext is the default kubeconfig context for the
+	// topology fallback.
+	DefaultKubeconfigContext = "kind-meshery-demo"
 )
 
 // Config holds runtime configuration for the Meshery MCP demo server.
@@ -36,22 +43,30 @@ type Config struct {
 	MeshServerURL string
 	// MeshTokenPath is the path to the mesheryctl auth file (token + provider cookies).
 	MeshTokenPath string
-	// MeshAPIToken is an optional raw token that overrides the auth file.
+	// MeshAPIToken is an optional raw token that overrides the auth file. It is
+	// populated from MESHERY_API_TOKEN or MESHERY_TOKEN.
 	MeshAPIToken string
 	// Transport selects the MCP transport: stdio, http, or sse.
 	Transport string
 	// HTTPAddr is the listen address for the http and sse transports.
 	HTTPAddr string
+	// KubeconfigPath is the path to the kubeconfig used by the topology
+	// fallback. Empty disables the fallback.
+	KubeconfigPath string
+	// KubeconfigContext is the kubeconfig context for the topology fallback.
+	KubeconfigContext string
 }
 
 // Load reads configuration from the environment, applying defaults where unset.
 func Load() *Config {
 	return &Config{
-		MeshServerURL: envOr("MESHERY_SERVER_URL", DefaultMeshServerURL),
-		MeshTokenPath: envOr("MESHERY_TOKEN_PATH", DefaultTokenPath),
-		MeshAPIToken:  os.Getenv("MESHERY_API_TOKEN"),
-		Transport:     envOr("MESHERY_MCP_TRANSPORT", "stdio"),
-		HTTPAddr:      envOr("MESHERY_MCP_HTTP_ADDR", DefaultHTTPAddr),
+		MeshServerURL:     envOr("MESHERY_SERVER_URL", DefaultMeshServerURL),
+		MeshTokenPath:     envOr("MESHERY_TOKEN_PATH", DefaultTokenPath),
+		MeshAPIToken:      envOr("MESHERY_API_TOKEN", os.Getenv("MESHERY_TOKEN")),
+		Transport:         envOr("MESHERY_MCP_TRANSPORT", "stdio"),
+		HTTPAddr:          envOr("MESHERY_MCP_HTTP_ADDR", DefaultHTTPAddr),
+		KubeconfigPath:    envOr("MESHERY_KUBECONFIG", DefaultKubeconfigPath),
+		KubeconfigContext: envOr("MESHERY_KUBECONFIG_CONTEXT", DefaultKubeconfigContext),
 	}
 }
 

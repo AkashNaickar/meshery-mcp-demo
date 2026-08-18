@@ -33,10 +33,17 @@ import (
 
 // Client talks to a Meshery Server REST API.
 type Client struct {
-	baseURL    string
-	token      string
-	provider   string
-	httpClient *http.Client
+	baseURL        string
+	token          string
+	provider       string
+	httpClient     *http.Client
+	topologySource TopologySource
+}
+
+// SetTopologySource installs an optional fallback that supplies a cluster's
+// live topology when MeshSync has not populated the server.
+func (c *Client) SetTopologySource(src TopologySource) {
+	c.topologySource = src
 }
 
 // Options configures a Client.
@@ -160,13 +167,19 @@ func (c *Client) request(ctx context.Context, method, path string, query url.Val
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("request %s %s: %w", method, u.Path, err)
+		// Connection-level failures mean the daemon is unreachable.
+		return &APIError{Code: ErrCodeUnreachable, Op: method + " " + u.Path, Msg: err.Error()}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("meshery API %s %s: %s: %s", method, u.Path, resp.Status, strings.TrimSpace(string(msg)))
+		return &APIError{
+			Code:   mapStatusToCode(resp.StatusCode),
+			Status: resp.StatusCode,
+			Op:     method + " " + u.Path,
+			Msg:    fmt.Sprintf("%s: %s", resp.Status, strings.TrimSpace(string(msg))),
+		}
 	}
 
 	if out != nil {

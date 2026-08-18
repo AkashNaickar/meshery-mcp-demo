@@ -71,8 +71,8 @@ func (t *subscriptionTracker) snapshot() []string {
 	return out
 }
 
-// Register registers the topology resource template and starts the
-// poll-and-notify subscription loop.
+// Register registers the resource templates (topology and designs) and starts
+// the poll-and-notify subscription loop for topology updates.
 func Register(s *server.MCPServer, mc *meshery.Client) error {
 	tracker := newSubscriptionTracker()
 
@@ -83,16 +83,21 @@ func Register(s *server.MCPServer, mc *meshery.Client) error {
 	)
 	s.AddResourceTemplate(template, topologyHandler(mc))
 
+	if err := RegisterDesigns(s, mc); err != nil {
+		return err
+	}
+
 	// Track resources/subscribe and resources/unsubscribe so the poller only
-	// watches URIs clients actually care about.
+	// watches URIs clients actually care about. The BeforeAny hook receives a
+	// pointer to the request message.
 	s.GetHooks().AddBeforeAny(func(_ context.Context, _ any, method mcp.MCPMethod, message any) {
 		switch method {
 		case mcp.MethodResourcesSubscribe:
-			if req, ok := message.(mcp.SubscribeRequest); ok && req.Params.URI != "" {
+			if req, ok := message.(*mcp.SubscribeRequest); ok && req.Params.URI != "" {
 				tracker.subscribe(req.Params.URI)
 			}
 		case mcp.MethodResourcesUnsubscribe:
-			if req, ok := message.(mcp.UnsubscribeRequest); ok && req.Params.URI != "" {
+			if req, ok := message.(*mcp.UnsubscribeRequest); ok && req.Params.URI != "" {
 				tracker.unsubscribe(req.Params.URI)
 			}
 		}
@@ -119,6 +124,9 @@ func topologyHandler(mc *meshery.Client) server.ResourceTemplateHandlerFunc {
 		if err != nil {
 			return nil, fmt.Errorf("encode topology: %w", err)
 		}
+		// Redact any credentials that MeshSync may have indexed (e.g. Secret
+		// data) before exposing the graph to the agent.
+		payload = mc.SanitizeJSON(payload)
 
 		return []mcp.ResourceContents{
 			mcp.TextResourceContents{
@@ -176,7 +184,6 @@ func pollTopologyUpdates(s *server.MCPServer, mc *meshery.Client, tracker *subsc
 			}
 			fingerprints[uri] = fp
 
-			log.Printf("topology changed for %s, notifying subscribers", uri)
 			s.SendNotificationToAllClients(mcp.MethodNotificationResourceUpdated, map[string]any{
 				"uri": uri,
 			})
