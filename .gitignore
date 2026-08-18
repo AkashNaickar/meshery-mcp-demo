@@ -1,0 +1,30 @@
+# Binaries
+bin/
+*.exe
+
+# Test and coverage output
+coverage.txt
+coverage.out
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment and local secrets
+.env
+.env.*
+*.local
+
+# Meshery auth (never commit credentials)
+.meshery/
+auth.json
+
+# Demo artifacts
+demo/
+*.mp4
+*.mov
