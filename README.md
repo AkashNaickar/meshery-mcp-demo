@@ -14,6 +14,7 @@ _Demo video: driving the server from MCP Inspector, validating a design, dry-run
 
 ## Architecture
 
+<img width="1323" height="1403" alt="mcp-server-design" src="https://github.com/user-attachments/assets/55bf08a4-7ce6-4c05-942a-41c897061a36" />
 
 
 ## What it demonstrates
