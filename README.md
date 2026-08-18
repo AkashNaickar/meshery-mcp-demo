@@ -10,8 +10,6 @@ A production-grade proof-of-concept of a [Model Context Protocol](https://modelc
 
 ## Demo
 
-[![Demo video](https://img.shields.io/badge/Watch-Demo%20Video-red)](https://github.com/user-attachments/assets/REPLACE_WITH_DEMO_VIDEO_ID)
-
 _Demo video: driving the server from MCP Inspector, validating a design, dry-run deploying, watching the topology resource update live, and verifying live workloads._
 
 ## Architecture
