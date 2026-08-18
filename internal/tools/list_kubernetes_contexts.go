@@ -17,6 +17,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -62,7 +63,11 @@ func listKubernetesContextsHandler(mc *meshery.Client) func(context.Context, mcp
 			})
 		}
 
-		fallback := fmt.Sprintf("%d Kubernetes context(s) found", len(contexts))
+		var names []string
+		for _, c := range contexts {
+			names = append(names, c.Name)
+		}
+		fallback := fmt.Sprintf("%d Kubernetes context(s) found: %s", len(contexts), strings.Join(names, ", "))
 		return mcp.NewToolResultStructured(map[string]any{
 			"contexts": contexts,
 			"count":    len(contexts),

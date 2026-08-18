@@ -17,6 +17,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -75,7 +76,15 @@ func getClusterResourcesHandler(mc *meshery.Client) func(context.Context, mcp.Ca
 			})
 		}
 
-		fallback := fmt.Sprintf("%d resource(s) found", len(items))
+		var summaries []string
+		for _, it := range items {
+			name := it.Name
+			if it.Namespace != "" {
+				name = it.Namespace + "/" + name
+			}
+			summaries = append(summaries, it.Kind+"/"+name)
+		}
+		fallback := fmt.Sprintf("%d resource(s): %s", len(items), strings.Join(summaries, ", "))
 		return mcp.NewToolResultStructured(map[string]any{
 			"resources": items,
 			"count":     len(items),

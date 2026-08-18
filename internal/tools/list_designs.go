@@ -17,6 +17,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -69,7 +70,11 @@ func listDesignsHandler(mc *meshery.Client) func(context.Context, mcp.CallToolRe
 			})
 		}
 
-		fallback := fmt.Sprintf("%d designs found (page %d, page size %d)", len(designs), page, pageSize)
+		var names []string
+		for _, d := range designs {
+			names = append(names, d.Name)
+		}
+		fallback := fmt.Sprintf("%d designs found (page %d, page size %d): %s", len(designs), page, pageSize, strings.Join(names, ", "))
 		return mcp.NewToolResultStructured(map[string]any{
 			"designs":   designs,
 			"count":     len(designs),
