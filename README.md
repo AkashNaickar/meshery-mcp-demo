@@ -10,7 +10,9 @@ A production-grade proof-of-concept of a [Model Context Protocol](https://modelc
 
 ## Demo
 
-_Demo video: driving the server from MCP Inspector, validating a design, dry-run deploying, watching the topology resource update live, and verifying live workloads._
+
+https://github.com/user-attachments/assets/92b0b8f0-fb3a-46b7-9d1f-04523c3e63b8
+
 
 ## Architecture
 
