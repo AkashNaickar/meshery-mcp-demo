@@ -14,36 +14,7 @@ _Demo video: driving the server from MCP Inspector, validating a design, dry-run
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    subgraph Host["MCP Host (Claude Desktop, Cursor, OpenCode, Inspector)"]
-        A[AI Agent]
-    end
 
-    subgraph Server["meshery-mcp-demo"]
-        B[Transport: stdio / streamable HTTP / SSE]
-        C[Registration seam<br/>tools, resources, prompts]
-        D[Shared Meshery client]
-        H[Sanitizer: secret redaction]
-        I[K8s topology fallback]
-    end
-
-    subgraph Backend["Meshery"]
-        E[Meshery Server REST API]
-        F[Kubernetes cluster]
-        G[MeshSync]
-    end
-
-    A -->|MCP protocol| B
-    B --> C
-    C --> D
-    D --> H
-    D --> I
-    D -->|authenticated REST| E
-    E --> F
-    G --> E
-    I -.->|direct k8s API| F
-```
 
 ## What it demonstrates
 
