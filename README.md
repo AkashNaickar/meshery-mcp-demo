@@ -30,7 +30,7 @@ https://github.com/user-attachments/assets/92b0b8f0-fb3a-46b7-9d1f-04523c3e63b8
 | `list_kubernetes_contexts` | readOnly | List Kubernetes contexts Meshery manages (`GET /api/system/kubernetes/contexts`) |
 | `list_designs` | readOnly | Paginated designs with optional `search`, `page`, `page_size` (`GET /api/pattern`) |
 | `validate_design` | readOnly | Lint a PatternFile YAML structurally + server-side without applying |
-| `deploy_design` | mutating | Deploy a PatternFile to a context; `dry_run` returns a preview without mutation |
+| `deploy_design` | mutating | Deploy a PatternFile to a context; `dry_run` returns a preview without mutation. When the Meshery server returns no apply confirmation (e.g. a hydration no-op on some versions), the tool honestly reports the planned components rather than faking success |
 | `undeploy_design` | destructive | Tear down a design's resources; `force` skips confirmation guards |
 | `get_cluster_resources` | readOnly | Inspect live pods/services/workloads for post-deploy verification |
 
@@ -171,6 +171,9 @@ npx @modelcontextprotocol/inspector ./bin/meshery-mcp-demo
 
 5. **Deploy**
    `deploy_design` with `{ "pattern_file": "<design YAML>", "context_id": "<ctx>", "dry_run": false }`.
+   If the server returns no apply confirmation (a hydration no-op on some Meshery
+   versions), the tool reports the planned components with an explicit note
+   instead of claiming an apply it cannot verify.
 
 6. **Verify live workloads**
    `get_cluster_resources` with `{ "context_id": "<ctx>", "namespace": "default" }`, and read `meshery://clusters/{cluster_id}/topology`.
