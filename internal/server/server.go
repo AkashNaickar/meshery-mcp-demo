@@ -42,15 +42,15 @@ func New(mc *meshery.Client) (*server.MCPServer, error) {
 	)
 
 	registry := NewRegistry(
-		RegistrantFunc(func(s *server.MCPServer) error {
+		Named("tools", RegistrantFunc(func(s *server.MCPServer) error {
 			return tools.Register(s, mc)
-		}),
-		RegistrantFunc(func(s *server.MCPServer) error {
+		})),
+		Named("resources", RegistrantFunc(func(s *server.MCPServer) error {
 			return resources.Register(s, mc)
-		}),
-		RegistrantFunc(func(s *server.MCPServer) error {
+		})),
+		Named("prompts", RegistrantFunc(func(s *server.MCPServer) error {
 			return prompts.Register(s)
-		}),
+		})),
 	)
 
 	if err := registry.RegisterAll(s); err != nil {
