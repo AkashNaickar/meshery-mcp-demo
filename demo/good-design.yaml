@@ -1,0 +1,7 @@
+name: demo-nginx
+schemaVersion: designs.meshery.io/v1beta3
+components:
+  - name: nginx-demo
+    type: Deployment
+  - name: nginx-demo-svc
+    type: Service
